@@ -24,6 +24,8 @@ class Module
   # * <tt>:prefix</tt> - Prefixes the new method with the target name or a custom prefix
   # * <tt>:allow_nil</tt> - if set to true, prevents a +Module::DelegationError+
   #   from being raised
+  # * <tt>:on_nil</tt> - Allows the customization of value returned when the delegatee is
+  #   nil
   #
   # The macro receives one or more method names (specified as symbols or
   # strings) and the name of the target object via the <tt>:to</tt> option
@@ -139,6 +141,17 @@ class Module
   #
   #   User.new.age # nil
   #
+  # Sometimes +nil+ is not the most sensible value to be returned when the delegatee is 
+  # absent. The <tt>:on_nil</tt> can be used to define a more reasonable value. A Proc may be
+  # provider when a dynamically-defined value is needed.
+  #
+  #   class User < ActiveRecord::Base
+  #     has_one :profile
+  #     delegate :age, to: :profile, allow_nil: true, on_nil: 21
+  #   end
+  #
+  #   User.new.age # 21
+  #  
   # Note that if the target is not +nil+ then the call is attempted regardless of the
   # <tt>:allow_nil</tt> option, and thus an exception is still raised if said object
   # does not respond to the method:
@@ -154,7 +167,7 @@ class Module
   #   Foo.new("Bar").name # raises NoMethodError: undefined method `name'
   #
   # The target method must be public, otherwise it will raise +NoMethodError+.
-  def delegate(*methods, to: nil, prefix: nil, allow_nil: nil)
+  def delegate(*methods, to: nil, prefix: nil, allow_nil: nil, on_nil: nil)
     unless to
       raise ArgumentError, "Delegation needs a target. Supply an options hash with a :to key as the last argument (e.g. delegate :hello, to: :greeter)."
     end
@@ -176,10 +189,19 @@ class Module
     to = to.to_s
     to = "self.#{to}" if DELEGATION_RESERVED_METHOD_NAMES.include?(to)
 
+    # Lets create a class-wide on_nil_mapping and store it on the @@__on_nil_mapping class variable if 
+    # there is none. Otherwise let's just already existent one.
+    class_variable_set(:@@__on_nil_mapping, {}) unless class_variable_defined?(:@@__on_nil_mapping)
+    on_nil_mapping = class_variable_get(:@@__on_nil_mapping)
+
+    # TODO COMMENT
+    normalized_on_nil = (on_nil.is_a? Proc) ? on_nil : Proc.new { on_nil } 
+
     methods.map do |method|
       # Attribute writer methods only accept one argument. Makes sure []=
       # methods still accept two arguments.
       definition = /[^\]]=$/.match?(method) ? "arg" : "*args, &block"
+      on_nil_mapping[method] = normalized_on_nil
 
       # The following generated method calls the target exactly once, storing
       # the returned value in a dummy variable.
@@ -194,6 +216,8 @@ class Module
           "_ = #{to}",
           "if !_.nil? || nil.respond_to?(:#{method})",
           "  _.#{method}(#{definition})",
+          "else",
+          "  self.instance_exec(*args, &@@__on_nil_mapping[:#{method}])",
           "end",
         "end"
         ].join ";"

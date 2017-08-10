@@ -39,6 +39,9 @@ end
 Project = Struct.new(:description, :person) do
   delegate :name, to: :person, allow_nil: true
   delegate :to_f, to: :description, allow_nil: true
+  delegate :downcase, to: :description, allow_nil: true, on_nil: Proc.new { "I'm a default value" }
+  delegate :uppercase, to: :description, allow_nil: true, on_nil: "I'm a default value"
+  delegate :crypt, to: :description, allow_nil: true, on_nil: Proc.new { |parameter| "#{parameter}, #{self.downcase}" }
 end
 
 Developer = Struct.new(:client) do
@@ -279,6 +282,21 @@ class ModuleTest < ActiveSupport::TestCase
   def test_delegation_to_method_that_exists_on_nil_when_allowing_nil
     nil_project = Project.new(nil)
     assert_equal 0.0, nil_project.to_f
+  end
+
+  def test_delegation_to_method_that_exists_on_nil_when_allowing_nil_providing_an_default_as_proc
+    nil_project = Project.new(nil)
+    assert_equal "I'm a default value", nil_project.downcase
+  end
+
+  def test_delegation_to_method_that_exists_on_nil_when_allowing_nil_providing_an_default_as_proc_accessing_self_and_parameters
+    nil_project = Project.new(nil)
+    assert_equal "123, I'm a default value", nil_project.crypt("123")
+  end
+
+  def test_delegation_to_method_that_exists_on_nil_when_allowing_nil_providing_an_default_as_literal
+    nil_project = Project.new(nil)
+    assert_equal "I'm a default value", nil_project.uppercase
   end
 
   def test_delegation_does_not_raise_error_when_removing_singleton_instance_methods
